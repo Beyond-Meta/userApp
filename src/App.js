@@ -26,7 +26,6 @@ class App extends Component {
     web3: null, coinbase: null, 
     chain: "eth", chainId: 3, // ropsten
     relayerJsonInterface: {
-      "constant": false,
       "inputs": [
         {
           "internalType": "bytes",
@@ -40,8 +39,18 @@ class App extends Component {
         },
         {
           "internalType": "address",
-          "name": "_owner",
+          "name": "_recipient",
           "type": "address"
+        },
+        {
+          "internalType": "uint256",
+          "name": "_amount",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "_fee",
+          "type": "uint256"
         },
         {
           "internalType": "uint256",
@@ -49,14 +58,19 @@ class App extends Component {
           "type": "uint256"
         }
       ],
-      "name": "setOwner",
-      "outputs": [],
-      "payable": false,
+      "name": "transfer",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "",
+          "type": "bool"
+        }
+      ],
       "stateMutability": "nonpayable",
       "type": "function"
     },
 
-    ethProvider: null, ethContractAddress: "", 
+    ethProvider: null, ethContractAddress: "0x88FB8FBB448A64CB2d35630811ED9CF6ebF518B6", 
     ethContractInstance: null, ethTimestamp: 0, ethSignature: "", ethRelayer: "",
 
     maticProvider: null, maticContractAddress: "", 
@@ -119,22 +133,107 @@ class App extends Component {
     }
   };
 
+  sign = async (chain, jsonInterface, inputParams) => {
+
+    const { web3, coinbase } = this.state
+
+    const timestamp = new Date().getTime();
+    const recipient = inputParams[0]
+    const amount = web3.utils.toWei(String(inputParams[1]))
+    
+    const data = web3.eth.abi.encodeFunctionCall(jsonInterface, [recipient, amount]);
+
+    const hex =
+      data + web3.utils.padLeft(web3.utils.toHex(timestamp), 64).slice(2);
+
+    switch(chain){
+      case 'eth':
+        web3.eth.personal
+          .sign(web3.utils.keccak256(hex), coinbase)
+          .then(signature => { 
+            console.log(timestamp, signature)
+            this.setState({ ethTimestamp: timestamp, ethSignature: signature }, ()=>{this.metaTx(chain, recipient, amount)})
+          })
+      break;
+    }
+  }
+
   
+  metaTx = async (chain, recipient, amount) => {
+    console.log('metaTx: ' + chain)
+    const { coinbase, relayerJsonInterface } = this.state
+    let data, gas;
+    const self = this;
+
+    switch(chain){
+      case 'eth':
+        const { ethProvider, ethSignature, ethTimestamp, ethContractAddress, ethRelayer} = this.state
+        const fee = ethProvider.utils.toWei("10")
+
+        console.log([ethSignature, coinbase, recipient , amount, fee, ethTimestamp])
+
+        data = ethProvider.eth.abi.encodeFunctionCall(relayerJsonInterface, [
+          ethSignature,
+          coinbase,
+          recipient, // bob recipient
+          amount,
+          fee,
+          ethTimestamp
+        ]);
+    
+        gas = await ethProvider.eth.estimateGas({
+          from: ethRelayer,
+          to: ethContractAddress,
+          data,
+        })
+        
+        ethProvider.eth.sendTransaction({
+          from: ethRelayer,
+          to: ethContractAddress,
+          data,
+          gas: parseInt(gas * 1.5)
+        })
+        .on('transactionHash', function(hash){
+          console.log('txhash: '+hash)
+          self.toggleModal("https://ropsten.etherscan.io/tx/"+hash)
+        })
+        .on('receipt', function(receipt){
+          console.log(receipt)
+          self.refresh('eth')
+        })
+        
+      break;
+    }
+  }
+
   onCamera = () => {
     this.setState({ camera: true });
   };
 
   handleScan = data => {
     if (data) {
-      console.log(typeof data);
       let params = JSON.parse(data);
       console.log(params)
-      // this.sign(params.chain, params.jsonInterface, params.inputs)
+      this.sign(params.chain, params.jsonInterface, params.inputs)
     }
   };
 
   handleError = err => {
     console.error(err);
+  };
+
+  
+  toggleModal = (url) => {
+
+    let display = this.state.display
+
+    display == 'none' ? display = 'block': display = 'none';
+
+    this.setState({
+      modal: !this.state.modal,
+      url,
+      display
+    });
   };
 
   render() {
@@ -153,7 +252,7 @@ class App extends Component {
                     <CardBody>
                       <Row>
                         <Col className="text-center" md="12">
-                          <h4 className="text-uppercase">DEVICE QR CODE</h4>
+                          <h4 className="text-uppercase">SCAN QR CODE</h4>
                           <hr className="line-info" />
                         </Col>
                       </Row>
@@ -165,7 +264,7 @@ class App extends Component {
                               className="btn-simple"
                               color="info"
                               onClick={() => {
-                                this.onCamera();
+                                this.sign();
                               }}
                             >
                               ON
@@ -205,11 +304,6 @@ class App extends Component {
             <p></p>
             <a href={this.state.url} target="_blank">View on Explorer</a>
           </ModalBody>
-          {/* <ModalFooter>
-            <Button color="secondary" onClick={this.toggleModalDemo}>
-              Close
-            </Button>
-          </ModalFooter> */}
         </Modal>
         <div style={{
           display: this.state.display, /* Hidden by default */
