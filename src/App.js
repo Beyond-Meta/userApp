@@ -22,7 +22,6 @@ import QrReader from "react-qr-reader";
 class App extends Component {
 
   state = { 
-    abi: [],
     web3: null, coinbase: null, 
     chain: "eth", chainId: 3, // ropsten
     relayerJsonInterface: {
@@ -71,10 +70,10 @@ class App extends Component {
     },
 
     ethProvider: null, ethContractAddress: "0x88FB8FBB448A64CB2d35630811ED9CF6ebF518B6", 
-    ethContractInstance: null, ethTimestamp: 0, ethSignature: "", ethRelayer: "",
+    ethTimestamp: 0, ethSignature: "", ethRelayer: "",
 
-    maticProvider: null, maticContractAddress: "", 
-    maticContractInstance: null, maticTimestamp: 0, maticSignature: "", maticRelayer: "",
+    maticProvider: null, maticContractAddress: "0x88FB8FBB448A64CB2d35630811ED9CF6ebF518B6", 
+    maticTimestamp: 0, maticSignature: "", maticRelayer: "",
 
     modal: false,
     url: "",
@@ -110,18 +109,26 @@ class App extends Component {
       
       const ethRelayer = ethProvider.eth.accounts.wallet[0].address;
       
-      // Set ETH contract
-      const ethContractInstance = new ethProvider.eth.Contract(
-        this.state.abi,
-        this.state.ethContractAddress
+      // Set MATIC Provider
+      const polygon = new Web3.providers.HttpProvider(
+        "https://rpc-mumbai.matic.today"
       );
+      const maticProvider = new Web3(polygon);
+
+      // Set Relayer MATIC Wallet
+      const maticWalletInstance = maticProvider.eth.accounts.privateKeyToAccount(
+        "0xc90785fea3756615dab8e002d0352de89341321c4a12ae352bd3ed444a43fd20"
+      );
+      maticProvider.eth.accounts.wallet.add(maticWalletInstance);
       
+      const maticRelayer = maticProvider.eth.accounts.wallet[0].address;
+    
       this.setState(
         { 
           web3, 
           coinbase: accounts[0], 
-          ethContractInstance, ethProvider, ethRelayer
-          // maticContractInstance, maticProvider, maticRelayer, maticRelayerBalance, maticOwner
+          ethProvider, ethRelayer,
+          maticProvider, maticRelayer
         }
       );
     } catch (error) {
@@ -155,6 +162,14 @@ class App extends Component {
             this.setState({ ethTimestamp: timestamp, ethSignature: signature }, ()=>{this.metaTx(chain, recipient, amount)})
           })
       break;
+      case 'polygon':
+        web3.eth.personal
+          .sign(web3.utils.keccak256(hex), coinbase)
+          .then(signature => { 
+            console.log(timestamp, signature)
+            this.setState({ maticTimestamp: timestamp, maticSignature: signature }, ()=>{this.metaTx(chain, recipient, amount)})
+          })
+      break;
     }
   }
 
@@ -162,20 +177,20 @@ class App extends Component {
   metaTx = async (chain, recipient, amount) => {
     console.log('metaTx: ' + chain)
     const { coinbase, relayerJsonInterface } = this.state
-    let data, gas;
+    let data, gas, fee;
     const self = this;
 
     switch(chain){
       case 'eth':
         const { ethProvider, ethSignature, ethTimestamp, ethContractAddress, ethRelayer} = this.state
-        const fee = ethProvider.utils.toWei("10")
+        fee = ethProvider.utils.toWei("10")
 
         console.log([ethSignature, coinbase, recipient , amount, fee, ethTimestamp])
 
         data = ethProvider.eth.abi.encodeFunctionCall(relayerJsonInterface, [
           ethSignature,
           coinbase,
-          recipient, // bob recipient
+          recipient, // Bob's address
           amount,
           fee,
           ethTimestamp
@@ -199,7 +214,44 @@ class App extends Component {
         })
         .on('receipt', function(receipt){
           console.log(receipt)
-          self.refresh('eth')
+          self.setState({modal:false, display:'none'})
+        })
+        
+      break;
+      case 'polygon':
+        const { maticProvider, maticSignature, maticTimestamp, maticContractAddress, maticRelayer} = this.state
+        fee = maticProvider.utils.toWei("10")
+        
+        console.log([maticSignature, coinbase, recipient , amount, fee, ethTimestamp])
+
+        data = maticProvider.eth.abi.encodeFunctionCall(relayerJsonInterface, [
+          maticSignature,
+          coinbase,
+          recipient,
+          amount,
+          fee,
+          maticTimestamp
+        ]);
+    
+        gas = await maticProvider.eth.estimateGas({
+          from: maticRelayer,
+          to: maticContractAddress,
+          data
+        })
+        
+        maticProvider.eth.sendTransaction({
+          from: maticRelayer,
+          to: maticContractAddress,
+          data,
+          gas: parseInt(gas * 1.5)
+        })
+        .on('transactionHash', function(hash){
+          console.log('txhash: '+hash)
+          self.toggleModal("https://mumbai.polygonscan.com/tx/"+hash)
+        })
+        .on('receipt', function(receipt){
+          console.log(receipt)
+          self.setState({modal:false, display:'none'})
         })
         
       break;
@@ -214,7 +266,9 @@ class App extends Component {
     if (data) {
       let params = JSON.parse(data);
       console.log(params)
-      this.sign(params.chain, params.jsonInterface, params.inputs)
+      this.setState({ camera: false}, ()=>{ 
+        this.sign(params.chain, params.jsonInterface, params.inputs) 
+      })
     }
   };
 
@@ -242,38 +296,31 @@ class App extends Component {
     }
     return (
       <div className="App">
-        <div className="wrapper">
-          <div className="">
-            <div className="" style={{margin: '100px', marginBottom: '0px'}}>
+            <div className="" style={{marginTop: '100px', marginBottom: '0px'}}>
               
               <Container>
-                <Row>
-                  <Card className="card-coin card-plain" style={{ minHeight: 300 }}>
-                    <CardBody>
                       <Row>
-                        <Col className="text-center" md="12">
+                        <Col className="text-center">
                           <h4 className="text-uppercase">SCAN QR CODE</h4>
                           <hr className="line-info" />
                         </Col>
                       </Row>
                       <Row>
                         <ListGroup>
-                          <ListGroupItem>CAMERA</ListGroupItem>
                           <ListGroupItem>
                             <Button
                               className="btn-simple"
                               color="info"
                               onClick={() => {
-                                this.sign();
+                                this.onCamera();
                               }}
                             >
-                              ON
+                              CAMERA ON
                             </Button>
                           </ListGroupItem>
                         </ListGroup>
                       </Row>
-                    </CardBody>
-                    <CardFooter className="text-center">
+                    <div className="text-center">
                       {this.state.camera ? (
                         <QrReader
                           delay={300}
@@ -284,14 +331,10 @@ class App extends Component {
                       ) : (
                         false
                       )}
-                    </CardFooter>
-                  </Card>
+                    </div>
                
-                </Row>
               </Container>
               
-            </div>
-          </div>
         </div>
         <Modal isOpen={this.state.modal} toggle={this.toggleModal}>
           <div className="modal-header">
