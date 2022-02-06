@@ -1,6 +1,7 @@
 # Beyond Meta (ONE Wallet)
 
 Interface that allows token transfer to various EVM chains using QR Code
+![architecture](https://user-images.githubusercontent.com/17763340/152686104-3913a7bc-c63a-4f2e-96e7-bcd54e982b23.png)
 
 ## How to run
 
