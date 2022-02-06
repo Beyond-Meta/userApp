@@ -4,14 +4,13 @@ import './App.css';
 import Web3 from "web3";
 import getWeb3 from "./getWeb3";
 
+import Caver from "caver-js";
+
 import {
   Button,
   Container,
   Row,
   Col,
-  Card,
-  CardBody,
-  CardFooter,
   ListGroupItem,
   ListGroup,
   Modal, ModalBody
@@ -75,6 +74,9 @@ class App extends Component {
     maticProvider: null, maticContractAddress: "0x88FB8FBB448A64CB2d35630811ED9CF6ebF518B6", 
     maticTimestamp: 0, maticSignature: "", maticRelayer: "",
 
+    klayProvider: null, klayContractAddress: "0x88FB8FBB448A64CB2d35630811ED9CF6ebF518B6", 
+    klayTimestamp: 0, klaySignature: "", klayRelayer: "",
+
     modal: false,
     url: "",
     display: "none",
@@ -123,12 +125,25 @@ class App extends Component {
       
       const maticRelayer = maticProvider.eth.accounts.wallet[0].address;
     
+      // Set KLAY Provider
+      const klayProvider = await new Caver("https://api.baobab.klaytn.net:8651/");
+    
+      // Set Relayer KLAY Wallet
+      const kalyWalletInstance = klayProvider.klay.accounts.privateKeyToAccount(
+        "0xc90785fea3756615dab8e002d0352de89341321c4a12ae352bd3ed444a43fd20"
+      );
+
+      klayProvider.klay.accounts.wallet.add(kalyWalletInstance);
+
+      const klayRelayer = klayProvider.klay.accounts.wallet[0].address;
+      
       this.setState(
         { 
           web3, 
           coinbase: accounts[0], 
           ethProvider, ethRelayer,
-          maticProvider, maticRelayer
+          maticProvider, maticRelayer,
+          klayProvider, klayRelayer
         }
       );
     } catch (error) {
@@ -168,6 +183,14 @@ class App extends Component {
           .then(signature => { 
             console.log(timestamp, signature)
             this.setState({ maticTimestamp: timestamp, maticSignature: signature }, ()=>{this.metaTx(chain, recipient, amount)})
+          })
+      break;
+      case 'klay':
+        web3.eth.personal
+          .sign(web3.utils.keccak256(hex), coinbase)
+          .then(signature => { 
+            console.log(timestamp, signature)
+            this.setState({ klayTimestamp: timestamp, klaySignature: signature }, ()=>{this.metaTx(chain, recipient, amount)})
           })
       break;
     }
@@ -248,6 +271,44 @@ class App extends Component {
         .on('transactionHash', function(hash){
           console.log('txhash: '+hash)
           self.toggleModal("https://mumbai.polygonscan.com/tx/"+hash)
+        })
+        .on('receipt', function(receipt){
+          console.log(receipt)
+          self.setState({modal:false, display:'none'})
+        })
+        
+      break;
+      case 'klay':
+        const { klayProvider, klaySignature, klayTimestamp, klayContractAddress, klayRelayer} = this.state
+        fee = klayProvider.utils.toWei("10")
+
+        console.log([klaySignature, coinbase, recipient , amount, fee, klayTimestamp])
+
+        data = klayProvider.klay.abi.encodeFunctionCall(relayerJsonInterface, [
+          klaySignature,
+          coinbase,
+          recipient, // Bob's address
+          amount,
+          fee,
+          klayTimestamp
+        ]);
+    
+        gas = await klayProvider.klay.estimateGas({
+          from: klayRelayer,
+          to: klayContractAddress,
+          data,
+        })
+        
+        klayProvider.klay.sendTransaction({
+          type: "SMART_CONTRACT_EXECUTION",
+          from: klayRelayer,
+          to: klayContractAddress,
+          data,
+          gas: parseInt(gas * 1.5)
+        })
+        .on('transactionHash', function(hash){
+          console.log('txhash: '+hash)
+          self.toggleModal("https://baobab.scope.klaytn.com/tx/"+hash)
         })
         .on('receipt', function(receipt){
           console.log(receipt)
